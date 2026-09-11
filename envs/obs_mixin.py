@@ -9,6 +9,7 @@ SEG_COLORS[8] = torch.tensor([255, 255, 255], dtype=torch.uint8, device=DEVICE)
 SEG_COLORS[9] = torch.tensor([255, 0, 0], dtype=torch.uint8, device=DEVICE)
 SEG_COLORS[10] = torch.tensor([255, 0, 0], dtype=torch.uint8, device=DEVICE)
 SEG_COLORS[11] = torch.tensor([0, 255, 0], dtype=torch.uint8, device=DEVICE)
+SEG_COLORS[12] = torch.tensor([0, 0, 255], dtype=torch.uint8, device=DEVICE)
 
 class ObsMixin:
     """Build image and robot-state observations."""
