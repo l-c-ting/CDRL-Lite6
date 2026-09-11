@@ -143,7 +143,7 @@ class TD3:
         self.critic_losses.clear()
         self.actor_losses.clear()
 
-    def save(self, path: str) -> None:
+    def save(self, path: str, metadata=None) -> None:
         # Keep legacy keys for existing render scripts.
         checkpoint = {
             "critic_cnn_target": self.target_encoder.state_dict(),
@@ -155,6 +155,8 @@ class TD3:
             "action_scale": np.array(1.0, dtype=np.float32),
             "action_bias": np.array(0.0, dtype=np.float32),
         }
+        if metadata is not None:
+            checkpoint["metadata"] = metadata
         torch.save(checkpoint, path)
         tqdm.write(f"Model saved to: {path}")
 

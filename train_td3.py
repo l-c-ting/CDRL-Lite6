@@ -113,6 +113,7 @@ from config import EnvConfig, RewardConfig, TD3Config, WarmupConfig
 from envs import Lite6LiftEnv
 from evaluation import EvaluationManager
 from utils import seed_everything
+from utils.run_metadata import create_run_metadata, save_run_metadata
 from warmup import run_warmup, reset_if_done
 
 
@@ -138,25 +139,44 @@ def train(
     for d in (model_dir, wandb_dir, tb_dir):
         os.makedirs(d, exist_ok=True)
 
-    wandb.init(
+    training_config = {
+        "td3": td3_config,
+        "train_environment": train_cfg,
+        "evaluation_environment": eval_cfg,
+        "warmup": {
+            **asdict(warmup_config),
+            "mode": "uniform_random",
+            "episode_steps": train_cfg.max_episode_steps,
+            "action_distribution": "Uniform(-1, 1)",
+            "store_all_transitions": True,
+        },
+        "reward": reward_config,
+    }
+    run_metadata, git_patch = create_run_metadata(
+        repo_dir=os.path.dirname(os.path.abspath(__file__)),
+        config=training_config,
+    )
+    metadata_paths = save_run_metadata(run_dir, run_metadata, git_patch)
+    git_state = run_metadata["git"]
+    if git_state["available"]:
+        print(
+            f"Git state: commit={git_state['short_commit']} "
+            f"branch={git_state['branch'] or 'detached'} dirty={git_state['dirty']}",
+            flush=True,
+        )
+    else:
+        print(f"Git state unavailable: {git_state['error']}", flush=True)
+
+    wandb_run = wandb.init(
         project="Lite6_Lifting",
         sync_tensorboard=True,
-        config={
-            "td3": asdict(td3_config),
-            "warmup": {
-                "mode": "uniform_random",
-                "exploration_total_steps": warmup_config.exploration_total_steps,
-                "episode_steps": train_cfg.max_episode_steps,
-                "reset_interval_steps": warmup_config.reset_interval_steps,
-                "action_distribution": "Uniform(-1, 1)",
-                "store_all_transitions": True,
-            },
-            "reward": asdict(reward_config),
-        },
+        config=run_metadata,
         name=f"TD3/{td3_config.seed}",
         save_code=False,
         dir=wandb_dir,
     )
+    for metadata_path in metadata_paths:
+        wandb_run.save(metadata_path, base_path=run_dir, policy="now")
     writer = SummaryWriter(tb_dir)
     env = Lite6LiftEnv(
         train_cfg, reward_config, image_size=image_size, num_envs=td3_config.num_envs
@@ -203,10 +223,26 @@ def train(
             if score > best:
                 # Save the highest-reward checkpoint.
                 best = score
-                agent.save(os.path.join(model_dir, "model_best.pt"))
+                agent.save(
+                    os.path.join(model_dir, "model_best.pt"),
+                    metadata={
+                        "run": run_metadata,
+                        "checkpoint": {
+                            "kind": "best",
+                            "train_step": train_step,
+                            "score": score,
+                        },
+                    },
+                )
             next_eval += td3_config.evaluate_freq
     if td3_config.save_model:
-        agent.save(os.path.join(model_dir, "model_final.pt"))
+        agent.save(
+            os.path.join(model_dir, "model_final.pt"),
+            metadata={
+                "run": run_metadata,
+                "checkpoint": {"kind": "final", "train_step": train_step, "score": best},
+            },
+        )
     progress.close()
     env.close()
     eval_env.close()
