@@ -62,6 +62,7 @@ class EnvConfig:
     cube_position_xy_max: np.ndarray = field(default_factory=lambda: arr([0.230, 0.035]))
     cube_density: float = 500.0
     cube_friction: float = 1.0
+    # Absolute cube-center height that counts as lifted.
     lift_height_threshold: float = 0.1
 
     # Side camera used for external viewing.
@@ -125,23 +126,7 @@ class TD3Config:
 
 @dataclass
 class RewardConfig:
-    # Enable dense shaping around the sparse success reward.
-    reward_shaping: bool = True
-
-    # Positive reward weights.
-    approach_weight: float = 0.5
-    grasp_weight: float = 2.0
-    lift_weight: float = 8.0
-    physical_grasp_weight: float = 4
-    success_bonus: float = 15.0
-
-    # Grasp proximity shaping.
-    grasp_near_distance: float = 0.008
-    grasp_near_ratio: float = 0.25
-
-    # Penalty weights.
-    orientation_penalty_weight: float = 0.2
-    rotation_penalty_weight: float = 0.1
-    straight_line_penalty_weight: float = 0.3
-    lift_drift_penalty_weight: float = 0.2
-    premature_close_penalty_weight: float = 0.5
+    # r = r1 + r2 + r3.
+    approach_distance_scale: float = 10.0
+    both_finger_contact_reward: float = 0.25
+    lifted_reward: float = 1.0
