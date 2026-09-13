@@ -16,7 +16,7 @@ class EnvConfig:
     robot_xml: Path = ROOT / "ufactory_lite6" / "lite6_gripper_wide.xml"
 
     dt: float = 0.003
-    substeps: int = 8
+    substeps: int = 12
     max_episode_steps: int = 5000
 
     # Rigid-body solver settings.
