@@ -12,6 +12,14 @@ class RewardMixin:
         reward = 1.0 - torch.tanh(self.reward_config.approach_distance_scale * distance)
         return reward.clamp(0.0, 1.0)
 
+    def _lift_reward(self, cube_height: torch.Tensor) -> torch.Tensor:
+        """Return r3 in [0, 1], increasing toward the lifting threshold."""
+        height_shortfall = (
+            self.env_config.lift_height_threshold - cube_height
+        ).clamp(min=0.0)
+        reward = 1.0 - torch.tanh(self.reward_config.lift_height_scale * height_shortfall)
+        return reward.clamp(0.0, 1.0) * self.reward_config.lifted_reward
+
     def _compute_reward(self) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         cube = self.cube.get_pos().to(DEVICE, dtype=torch.float32)
         cube = cube.unsqueeze(0) if cube.dim() == 1 else cube
@@ -29,14 +37,17 @@ class RewardMixin:
 
         r1 = self._approach_reward(tool, target)
         r2 = both_finger_contact.float() * c.both_finger_contact_reward
-        r3 = lifted.float() * c.lifted_reward
+        r3 = self._lift_reward(cube[..., 2])
         reward = r1 + r2 + r3
 
         info = {
             "r1_approach": r1.detach(),
             "r2_both_finger_contact": r2.detach(),
-            "r3_lifted": r3.detach(),
+            "r3_lift": r3.detach(),
             "tool_distance": tool_distance.detach(),
+            "height_shortfall": (
+                self.env_config.lift_height_threshold - cube[..., 2]
+            ).clamp(min=0.0).detach(),
             "both_finger_contact": both_finger_contact.detach(),
             "success": lifted.detach(),
         }

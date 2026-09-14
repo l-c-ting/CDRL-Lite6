@@ -129,4 +129,5 @@ class RewardConfig:
     # r = r1 + r2 + r3.
     approach_distance_scale: float = 10.0
     both_finger_contact_reward: float = 0.25
+    lift_height_scale: float = 10.0
     lifted_reward: float = 1.0
