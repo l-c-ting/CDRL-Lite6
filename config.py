@@ -120,7 +120,7 @@ class TD3Config:
     eval_max_episode_steps: int = 5000
     eval_num_envs: int = 3
     eval_episodes: int = 3
-    evaluate_freq: int = 80_000
+    evaluate_freq: int = 16_000
 
 
 @dataclass
