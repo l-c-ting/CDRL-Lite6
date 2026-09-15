@@ -25,6 +25,24 @@ class RewardMixin:
         premature_close = close_amount * (~near).float()
         return reward, premature_close, close_amount, tool_dist
 
+    def _midpoint_alignment(self, tool: torch.Tensor, target: torch.Tensor):
+        """Reward XY alignment of the fingertip midpoint near the grasp height."""
+        xy_error = torch.linalg.norm(tool[..., :2] - target[..., :2], dim=-1)
+        xy_reward = 1.0 - torch.tanh(
+            xy_error / self.reward_config.midpoint_align_scale
+        )
+
+        # ``tool`` is the configured center between the finger tips.  Gate the
+        # XY reward by height so the policy cannot collect it while hovering far
+        # above or below the cube.
+        z_error = (tool[..., 2] - target[..., 2]).abs()
+        height_gate = 1.0 - torch.tanh(
+            z_error / self.reward_config.midpoint_align_scale
+        )
+        reward = xy_reward * height_gate
+        aligned = xy_error <= self.reward_config.midpoint_align_threshold
+        return reward, xy_error, z_error, aligned
+
     def _downward_orientation_penalty(self, ee_quat: torch.Tensor) -> torch.Tensor:
         """Penalize end-effector tilt."""
         w, x, y, z = ee_quat[..., 0], ee_quat[..., 1], ee_quat[..., 2], ee_quat[..., 3]
@@ -37,29 +55,56 @@ class RewardMixin:
         """Penalize finger rotation beyond 45 degrees."""
         vec_xy = left[..., :2] - right[..., :2]
         angle_from_y = torch.atan2(vec_xy[..., 0].abs(), vec_xy[..., 1].abs())
+        return (angle_from_y - (math.pi / 4.0)).clamp(min=0.0)
 
-        excess_rotation = (angle_from_y - (math.pi / 4.0)).clamp(min=0.0)
-        return excess_rotation
+    def _lift_quality_reward(self, cube: torch.Tensor):
+        """Return held lift progress, direction quality, and motion penalties."""
+        grasped = self.physical_grasp.bool()
+        grasped_float = grasped.float()
 
-    def _straight_line_penalty(
-        self, tcp_pos: torch.Tensor, target_pos: torch.Tensor
-    ) -> torch.Tensor:
-        """Penalize horizontal tool offset."""
-        xy_dist = torch.linalg.norm(tcp_pos[..., :2] - target_pos[..., :2], dim=-1)
-        return xy_dist
+        z_lift = (cube[..., 2] - self.cube_init_zs).clamp(min=0.0)
+        lift_progress = (
+            z_lift / self.env_config.lift_height_threshold
+        ).clamp(0.0, 1.0) * grasped_float
 
-    def _straight_lift_reward(self, cube_pos: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Return held lift progress and XY drift."""
-        z_lift = (cube_pos[..., 2] - self.cube_init_zs).clamp(min=0.0)
-        lift_progress = (z_lift / self.env_config.lift_height_threshold).clamp(0.0, 1.0)
+        delta_pos = cube - self.prev_cube_pos
+        delta_z = delta_pos[..., 2]
+        motion_norm = torch.linalg.norm(delta_pos, dim=-1)
+        upward_progress = (
+            delta_z / self.reward_config.lift_progress_scale
+        ).clamp(-1.0, 1.0) * grasped_float
 
-        init_xy = self.cube_initial_positions[:, :2]
-        xy_drift = torch.linalg.norm(cube_pos[..., :2] - init_xy, dim=-1)
+        vertical_direction = torch.zeros_like(delta_z)
+        valid_motion = grasped & (
+            motion_norm > self.reward_config.min_lift_motion
+        )
+        vertical_direction[valid_motion] = (
+            delta_z[valid_motion] / (motion_norm[valid_motion] + 1e-8)
+        )
 
-        lift_score = lift_progress * self.physical_grasp.float()
-        lift_drift_penalty = xy_drift * self.physical_grasp.float()
+        xy_drift_distance = torch.linalg.norm(
+            cube[..., :2] - self.grasp_reference_xy, dim=-1
+        )
+        xy_drift = (
+            xy_drift_distance / self.reward_config.lift_drift_scale
+        ).clamp(0.0, 1.0) * grasped_float
 
-        return lift_score, lift_drift_penalty
+        cube_vel = self.cube.get_vel().to(DEVICE, dtype=torch.float32)
+        cube_vel = cube_vel.unsqueeze(0) if cube_vel.dim() == 1 else cube_vel
+        lateral_speed = torch.linalg.norm(cube_vel[..., :2], dim=-1)
+        lateral_velocity = (
+            lateral_speed / self.reward_config.lateral_velocity_scale
+        ).clamp(0.0, 1.0) * grasped_float
+
+        return (
+            lift_progress,
+            upward_progress,
+            vertical_direction,
+            xy_drift,
+            lateral_velocity,
+            xy_drift_distance,
+            lateral_speed,
+        )
 
     def _compute_reward(self) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         cube = self.cube.get_pos().to(DEVICE, dtype=torch.float32)
@@ -77,14 +122,33 @@ class RewardMixin:
         target = cube.clone()
         target[:, 2] += self.env_config.grasp_site_z_offset
 
+        current_grasp = self.physical_grasp.bool()
+        new_grasp = current_grasp & (~self.prev_physical_grasp)
+        if new_grasp.any():
+            self.grasp_reference_xy[new_grasp] = cube[new_grasp, :2]
+
         # Positive terms.
         r_approach = self._approach_reward(tool, target)
-        r_side_grasp, p_premature_close, close_amount, tool_dist = self._grasp_reward(tool, target)
-        r_physical_grasp = self.physical_grasp.float()
-        r_lift, p_lift_drift = self._straight_lift_reward(cube)
+        r_grasp, p_premature_close, close_amount, tool_dist = self._grasp_reward(
+            tool, target
+        )
+        r_midpoint, midpoint_error, midpoint_z_error, midpoint_aligned = (
+            self._midpoint_alignment(tool, target)
+        )
+        # Keep this term faithful to its name: alignment is rewarded separately.
+        r_physical_grasp = current_grasp.float()
+        (
+            r_lift,
+            r_upward,
+            r_vertical,
+            p_drift,
+            p_lateral_vel,
+            xy_drift_distance,
+            lateral_speed,
+        ) = self._lift_quality_reward(cube)
 
         # Pay success on every held step above the threshold.
-        success = self.physical_grasp & (
+        success = current_grasp & (
             (cube[..., 2] - self.cube_init_zs) >= self.env_config.lift_height_threshold
         )
         r_success = success.float() * self.reward_config.success_bonus
@@ -92,22 +156,24 @@ class RewardMixin:
         # Penalty terms.
         p_orientation = self._downward_orientation_penalty(ee_quat)
         p_rotation = self._rotation_penalty(left, right)
-        p_straight_line = self._straight_line_penalty(tool, target)
 
         c = self.reward_config
 
         if c.reward_shaping:
             reward = (
                 (c.approach_weight * r_approach)
-                + (c.grasp_weight * r_side_grasp)
+                + (c.grasp_weight * r_grasp)
+                + (c.midpoint_align_weight * r_midpoint)
                 + (c.physical_grasp_weight * r_physical_grasp)
                 + (c.lift_weight * r_lift)
-                + r_success
+                + (c.lift_progress_weight * r_upward)
+                + (c.vertical_direction_weight * r_vertical)
+                - (c.lift_drift_penalty_weight * p_drift)
+                - (c.lateral_velocity_penalty_weight * p_lateral_vel)
                 - (c.orientation_penalty_weight * p_orientation)
                 - (c.rotation_penalty_weight * p_rotation)
-                - (c.straight_line_penalty_weight * p_straight_line)
-                - (c.lift_drift_penalty_weight * p_lift_drift)
                 - (c.premature_close_penalty_weight * p_premature_close)
+                + r_success
             )
         else:
             reward = r_success
@@ -115,16 +181,28 @@ class RewardMixin:
         # Expose raw terms for diagnostics.
         info = {
             "r_approach": r_approach.detach(),
-            "r_side_grasp": r_side_grasp.detach(),
+            "r_grasp": r_grasp.detach(),
+            "r_midpoint": r_midpoint.detach(),
             "r_physical_grasp": r_physical_grasp.detach(),
             "r_lift": r_lift.detach(),
+            "r_upward": r_upward.detach(),
+            "r_vertical": r_vertical.detach(),
+            "p_drift": p_drift.detach(),
+            "p_lateral_velocity": p_lateral_vel.detach(),
             "p_orientation": p_orientation.detach(),
             "p_rotation": p_rotation.detach(),
-            "p_straight_line": p_straight_line.detach(),
-            "p_lift_drift": p_lift_drift.detach(),
             "p_premature_close": p_premature_close.detach(),
+            "midpoint_error": midpoint_error.detach(),
+            "midpoint_z_error": midpoint_z_error.detach(),
+            "midpoint_aligned": midpoint_aligned.detach(),
+            "xy_drift_distance": xy_drift_distance.detach(),
+            "lateral_speed": lateral_speed.detach(),
             "tool_distance": tool_dist.detach(),
             "gripper_close_amount": close_amount.detach(),
             "success": success.detach(),
         }
+
+        self.prev_cube_pos = cube.detach().clone()
+        self.prev_physical_grasp = current_grasp.detach().clone()
+
         return reward, info

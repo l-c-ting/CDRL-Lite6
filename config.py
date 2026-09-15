@@ -131,17 +131,32 @@ class RewardConfig:
     # Positive reward weights.
     approach_weight: float = 0.5
     grasp_weight: float = 2.0
+    midpoint_align_weight: float = 0.75
+    physical_grasp_weight: float = 4.0
     lift_weight: float = 8.0
-    physical_grasp_weight: float = 4
+    lift_progress_weight: float = 2.0
+    vertical_direction_weight: float = 0.75
     success_bonus: float = 15.0
 
     # Grasp proximity shaping.
     grasp_near_distance: float = 0.008
     grasp_near_ratio: float = 0.25
 
+    # Finger-tip midpoint alignment shaping.
+    midpoint_align_scale: float = 0.008
+    midpoint_align_threshold: float = 0.010
+
+    # Per-step lift quality shaping.
+    lift_progress_scale: float = 0.003
+    min_lift_motion: float = 2e-4
+
+    # Held-object stability scales.
+    lift_drift_scale: float = 0.015
+    lateral_velocity_scale: float = 0.05
+
     # Penalty weights.
+    lift_drift_penalty_weight: float = 0.5
+    lateral_velocity_penalty_weight: float = 0.25
     orientation_penalty_weight: float = 0.2
     rotation_penalty_weight: float = 0.1
-    straight_line_penalty_weight: float = 0.3
-    lift_drift_penalty_weight: float = 0.2
     premature_close_penalty_weight: float = 0.5

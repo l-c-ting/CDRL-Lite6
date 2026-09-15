@@ -263,6 +263,14 @@ class Lite6LiftEnv(SceneMixin, ObsMixin, RewardMixin):
         self.cube_initial_positions = settled.detach().clone()
         self.cube_init_zs = self.cube_initial_positions[:, 2]
         self.cube_init_z = float(self.cube_init_zs.mean().item())
+
+        # Initialize stateful reward references from the settled pose so the
+        # first transition does not include reset/settling motion.
+        self.prev_cube_pos = self.cube_initial_positions.clone()
+        self.grasp_reference_xy = self.cube_initial_positions[:, :2].clone()
+        self.prev_physical_grasp = torch.zeros(
+            self.num_envs, dtype=torch.bool, device=DEVICE
+        )
         return self._get_obs(), {}
 
     def step(self, actions):
