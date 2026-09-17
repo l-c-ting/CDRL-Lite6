@@ -101,7 +101,7 @@ class TD3Config:
     output_dir: Path = Path("runs/td3_lite6")
 
     # TD3 optimization settings.
-    train_total_steps: int = 1_600_000
+    train_total_steps: int = 1_200_000
     buffer_size: int = 1_200_000
     q_lr: float = 1e-4
     policy_lr: float = 1e-4
@@ -120,43 +120,36 @@ class TD3Config:
     eval_max_episode_steps: int = 5000
     eval_num_envs: int = 3
     eval_episodes: int = 3
-    evaluate_freq: int = 16_000
+    evaluate_freq: int = 12_000
 
 
 @dataclass
 class RewardConfig:
-    # Enable dense shaping around the sparse success reward.
     reward_shaping: bool = True
 
-    # Positive reward weights.
     approach_weight: float = 0.5
-    grasp_weight: float = 2.0
     midpoint_align_weight: float = 0.75
-    physical_grasp_weight: float = 4.0
-    lift_weight: float = 8.0
-    lift_progress_weight: float = 2.0
-    vertical_direction_weight: float = 0.75
+
+    grasp_event_bonus: float = 4.0
+
+    upward_progress_weight: float = 5.0
     success_bonus: float = 15.0
+    success_hold_weight: float = 1.0
 
-    # Grasp proximity shaping.
-    grasp_near_distance: float = 0.008
-    grasp_near_ratio: float = 0.25
-
-    # Finger-tip midpoint alignment shaping.
-    midpoint_align_scale: float = 0.008
-    midpoint_align_threshold: float = 0.010
-
-    # Per-step lift quality shaping.
-    lift_progress_scale: float = 0.003
-    min_lift_motion: float = 2e-4
-
-    # Held-object stability scales.
-    lift_drift_scale: float = 0.015
-    lateral_velocity_scale: float = 0.05
-
-    # Penalty weights.
+    drop_penalty_weight: float = 4.0
     lift_drift_penalty_weight: float = 0.5
     lateral_velocity_penalty_weight: float = 0.25
     orientation_penalty_weight: float = 0.2
     rotation_penalty_weight: float = 0.1
     premature_close_penalty_weight: float = 0.5
+
+    grasp_near_distance: float = 0.008
+
+    approach_progress_scale: float = 0.003
+    midpoint_progress_scale: float = 0.003
+
+    midpoint_xy_threshold: float = 0.010
+
+    lift_progress_scale: float = 0.003
+    lift_drift_scale: float = 0.015
+    lateral_velocity_scale: float = 0.05

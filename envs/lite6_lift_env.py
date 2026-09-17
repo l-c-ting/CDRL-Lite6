@@ -266,11 +266,35 @@ class Lite6LiftEnv(SceneMixin, ObsMixin, RewardMixin):
 
         # Initialize stateful reward references from the settled pose so the
         # first transition does not include reset/settling motion.
-        self.prev_cube_pos = self.cube_initial_positions.clone()
-        self.grasp_reference_xy = self.cube_initial_positions[:, :2].clone()
+        cube = self.cube.get_pos().to(DEVICE, dtype=torch.float32)
+        tool = self._tool_pos().to(DEVICE, dtype=torch.float32)
+        if cube.dim() == 1:
+            cube = cube.unsqueeze(0)
+        if tool.dim() == 1:
+            tool = tool.unsqueeze(0)
+
+        target = cube.clone()
+        target[:, 2] += self.env_config.grasp_site_z_offset
+        midpoint_xy_error, _ = self._alignment(tool, cube)
+
+        self.prev_cube_pos = cube.detach().clone()
+        self.prev_tool_dist = torch.linalg.norm(
+            tool - target, dim=-1
+        ).detach().clone()
+        self.prev_midpoint_xy_error = midpoint_xy_error.detach().clone()
         self.prev_physical_grasp = torch.zeros(
             self.num_envs, dtype=torch.bool, device=DEVICE
         )
+        self.prev_valid_grasp = torch.zeros(
+            self.num_envs, dtype=torch.bool, device=DEVICE
+        )
+        self.has_grasped = torch.zeros(
+            self.num_envs, dtype=torch.bool, device=DEVICE
+        )
+        self.has_succeeded = torch.zeros(
+            self.num_envs, dtype=torch.bool, device=DEVICE
+        )
+        self.grasp_reference_xy = cube[:, :2].detach().clone()
         return self._get_obs(), {}
 
     def step(self, actions):
