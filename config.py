@@ -62,7 +62,8 @@ class EnvConfig:
     cube_position_xy_max: np.ndarray = field(default_factory=lambda: arr([0.230, 0.035]))
     cube_density: float = 500.0
     cube_friction: float = 1.0
-    lift_height_threshold: float = 0.1
+    lift_target_height: float = 0.10
+    success_dwell_steps: int = 100
 
     # Side camera used for external viewing.
     side_camera_view: Literal["front", "right", "left"] = "front"
@@ -125,23 +126,23 @@ class TD3Config:
 
 @dataclass
 class RewardConfig:
-    # Enable dense shaping around the sparse success reward.
     reward_shaping: bool = True
 
-    # Positive reward weights.
-    approach_weight: float = 0.5
-    grasp_weight: float = 2.0
-    lift_weight: float = 8.0
-    physical_grasp_weight: float = 4
-    success_bonus: float = 15.0
+    # Phase 1: approach and establish a physical grasp.
+    side_reach_weight: float = 0.15
+    grasp_weight: float = 0.50
+    grasp_close_weight: float = 0.20
+    grasp_contact_weight: float = 0.30
+    grasp_event_weight: float = 0.50
+    reach_distance_scale: float = 25.0
 
-    # Grasp proximity shaping.
-    grasp_near_distance: float = 0.008
-    grasp_near_ratio: float = 0.25
+    # Phase 2: move the grasped cube to its per-episode target.
+    lift_weight: float = 3.00
+    lift_target_std: float = 0.10
 
-    # Penalty weights.
-    orientation_penalty_weight: float = 0.2
-    rotation_penalty_weight: float = 0.1
-    straight_line_penalty_weight: float = 0.3
-    lift_drift_penalty_weight: float = 0.2
-    premature_close_penalty_weight: float = 0.5
+    # Reward every step spent within the target sphere while still grasped.
+    target_tolerance: float = 0.02
+    target_dwell_reward: float = 5.00
+
+    # Discourage losing an established grasp.
+    drop_penalty_weight: float = 4.00

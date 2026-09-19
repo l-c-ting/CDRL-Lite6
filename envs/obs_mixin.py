@@ -42,7 +42,7 @@ class ObsMixin:
         return 1.0 - 2.0 * ((q - self.gripper_open) / den).clamp(0.0, 1.0).mean(dim=-1, keepdim=True)
 
     def _robot_feature(self):
-        # Arm state, tool pose, tool velocity, and gripper state.
+        # Arm state, tool pose, tool velocity, gripper state, and target vector.
         q = self.robot.get_dofs_position(self.arm_dofs)
         dq = self.robot.get_dofs_velocity(self.arm_dofs)
         p = self.ee_link.get_pos()
@@ -56,7 +56,11 @@ class ObsMixin:
                 quat.unsqueeze(0),
                 v.unsqueeze(0),
             )
-        return torch.cat((q, dq, p, quat, v, self._gripper_state()), dim=-1).float()
+        target_from_tool = self.target_positions - self._tool_pos()
+        return torch.cat(
+            (q, dq, p, quat, v, self._gripper_state(), target_from_tool),
+            dim=-1,
+        ).float()
 
     @staticmethod
     def _crop(x):

@@ -18,6 +18,7 @@ class EvaluationManager:
         reward_sum = 0.0
         length_sum = 0.0
         success_sum = 0.0
+        dwell_steps_sum = 0.0
 
         episode_rewards = torch.zeros(num_envs, dtype=torch.float32, device=DEVICE)
         episode_lengths = torch.zeros(num_envs, dtype=torch.float32, device=DEVICE)
@@ -36,7 +37,8 @@ class EvaluationManager:
                     break
                 reward_sum += episode_rewards[env_id].item()
                 length_sum += episode_lengths[env_id].item()
-                success_sum += info["success_hold_counter"][env_id].item()
+                success_sum += info["is_success"][env_id].float().item()
+                dwell_steps_sum += info["target_dwell_steps"][env_id].item()
                 episode_count += 1
 
             if done_ids.numel() > 0:
@@ -47,15 +49,20 @@ class EvaluationManager:
 
         mean_reward = reward_sum / self.num_episodes
         mean_length = length_sum / self.num_episodes
-        mean_success = success_sum / self.num_episodes
+        success_rate = success_sum / self.num_episodes
+        mean_dwell_steps = dwell_steps_sum / self.num_episodes
+        mean_dwell_ratio = mean_dwell_steps / mean_length if mean_length > 0 else 0.0
 
         if writer is not None:
             writer.add_scalar("eval/eval_rews", mean_reward, step)
             writer.add_scalar("eval/eval_lens", mean_length, step)
-            writer.add_scalar("eval/success_hold_counter", mean_success, step)
+            writer.add_scalar("eval/success_rate", success_rate, step)
+            writer.add_scalar("eval/target_dwell_steps", mean_dwell_steps, step)
+            writer.add_scalar("eval/target_dwell_ratio", mean_dwell_ratio, step)
 
         tqdm.write(
             f"[Eval] step={step} | reward={mean_reward:.2f} | "
-            f"length={mean_length:.1f} | success={mean_success:.1f}"
+            f"length={mean_length:.1f} | success_rate={success_rate:.3f} | "
+            f"target_dwell={mean_dwell_steps:.1f}"
         )
-        return mean_reward, mean_length, mean_success
+        return mean_reward, mean_length, success_rate

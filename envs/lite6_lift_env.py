@@ -25,15 +25,16 @@ class Lite6LiftEnv(SceneMixin, ObsMixin, RewardMixin):
             env_spacing,
             render_mode,
         )
-        # Six arm velocities plus one gripper command.
-        self.action_dim, self.feature_dim = 7, 23
+        # Six arm velocities plus one gripper command.  The policy feature also
+        # includes a 3D vector from the tool site to the per-episode target.
+        self.action_dim, self.feature_dim = 7, 26
         self.arm_init = torch.as_tensor(env_config.arm_init, dtype=torch.float32, device=DEVICE)
         self.cube_sizes_np = self._sample_cube_sizes()
         self.cube_sizes = torch.as_tensor(
             self.cube_sizes_np, dtype=torch.float32, device=DEVICE
         )
         self.current_step = torch.zeros(self.num_envs, dtype=torch.long, device=DEVICE)
-        self.success_counter = torch.zeros_like(self.current_step)
+        self.target_dwell_steps = torch.zeros_like(self.current_step)
         self.gripper_command = torch.ones(self.num_envs, dtype=torch.float32, device=DEVICE)
         initial_position = torch.as_tensor(
             env_config.cube_init_position, dtype=torch.float32, device=DEVICE
@@ -42,6 +43,8 @@ class Lite6LiftEnv(SceneMixin, ObsMixin, RewardMixin):
         self.cube_initial_positions = initial_position
         self.cube_init_zs = initial_position[:, 2].clone()
         self.cube_init_z = float(self.cube_init_zs.mean().item())
+        self.target_positions = initial_position.clone()
+        self.target_positions[:, 2] += self.env_config.lift_target_height
         self._build_scene()
         self._find_robot_components()
         self._attach_wrist_camera()
@@ -123,6 +126,8 @@ class Lite6LiftEnv(SceneMixin, ObsMixin, RewardMixin):
         self.contact_right_y = self.contact_left_y.clone()
         self.contact_left_axis = self.contact_left_y.clone()
         self.contact_right_axis = self.contact_left_y.clone()
+        self.prev_physical_grasp = torch.zeros_like(self.physical_grasp)
+        self.has_grasped = torch.zeros_like(self.physical_grasp)
 
     @staticmethod
     def _quat_rotate(q, v):
@@ -217,7 +222,7 @@ class Lite6LiftEnv(SceneMixin, ObsMixin, RewardMixin):
             np.random.seed(seed)
             torch.manual_seed(seed)
         self.current_step.zero_()
-        self.success_counter.zero_()
+        self.target_dwell_steps.zero_()
         self.gripper_command.fill_(1.0)
         for x in (
             self.physical_grasp,
@@ -225,6 +230,8 @@ class Lite6LiftEnv(SceneMixin, ObsMixin, RewardMixin):
             self.contact_left,
             self.contact_right,
             self.contact_opposite,
+            self.prev_physical_grasp,
+            self.has_grasped,
         ):
             x.zero_()
         self.contact_left_y.fill_(float("nan"))
@@ -263,6 +270,8 @@ class Lite6LiftEnv(SceneMixin, ObsMixin, RewardMixin):
         self.cube_initial_positions = settled.detach().clone()
         self.cube_init_zs = self.cube_initial_positions[:, 2]
         self.cube_init_z = float(self.cube_init_zs.mean().item())
+        self.target_positions = self.cube_initial_positions.clone()
+        self.target_positions[:, 2] += self.env_config.lift_target_height
         return self._get_obs(), {}
 
     def step(self, actions):
@@ -303,13 +312,24 @@ class Lite6LiftEnv(SceneMixin, ObsMixin, RewardMixin):
             self._update_grasp(grip)
         obs = self._get_obs()
         reward, info = self._compute_reward()
-        success = info["success"].bool()
-        # Success never ends an episode early.
-        self.success_counter += success.long()
-        done = self.current_step >= self.env_config.max_episode_steps
+        in_target = info["in_target"].bool()
+        # Count total target occupancy. Leaving the target pauses the counter;
+        # it intentionally does not reset it.
+        self.target_dwell_steps += in_target.long()
+        success = self.target_dwell_steps >= self.env_config.success_dwell_steps
+
+        # Reaching the success threshold never ends an episode early. Every
+        # environment runs to the configured time limit so target reward can
+        # continue accumulating.
+        terminated = torch.zeros_like(success)
+        truncated = self.current_step >= self.env_config.max_episode_steps
         info.update(
             is_success=success.detach(),
-            success_hold_counter=self.success_counter.detach().clone(),
+            target_dwell_steps=self.target_dwell_steps.detach().clone(),
+            target_dwell_ratio=(
+                self.target_dwell_steps.float()
+                / self.current_step.clamp(min=1).float()
+            ).detach(),
             contact_left=self.contact_left.detach().clone(),
             contact_right=self.contact_right.detach().clone(),
             contact_opposite=self.contact_opposite.detach().clone(),
@@ -320,8 +340,15 @@ class Lite6LiftEnv(SceneMixin, ObsMixin, RewardMixin):
             physical_grasp=self.physical_grasp.detach().clone(),
             cube_size=self.cube_sizes.detach().clone(),
             cube_initial_position=self.cube_initial_positions.detach().clone(),
+            target_position=self.target_positions.detach().clone(),
         )
-        return obs, reward.detach(), done.detach(), done.detach(), info
+        return (
+            obs,
+            reward.detach(),
+            terminated.detach(),
+            truncated.detach(),
+            info,
+        )
 
     def close(self):
         self.physical_grasp.zero_()
