@@ -34,7 +34,8 @@ class Lite6LiftEnv(SceneMixin, ObsMixin, RewardMixin):
             self.cube_sizes_np, dtype=torch.float32, device=DEVICE
         )
         self.current_step = torch.zeros(self.num_envs, dtype=torch.long, device=DEVICE)
-        self.target_dwell_steps = torch.zeros_like(self.current_step)
+        self.target_hold_steps = torch.zeros_like(self.current_step)
+        self.success_count = torch.zeros_like(self.current_step)
         self.gripper_command = torch.ones(self.num_envs, dtype=torch.float32, device=DEVICE)
         initial_position = torch.as_tensor(
             env_config.cube_init_position, dtype=torch.float32, device=DEVICE
@@ -222,7 +223,8 @@ class Lite6LiftEnv(SceneMixin, ObsMixin, RewardMixin):
             np.random.seed(seed)
             torch.manual_seed(seed)
         self.current_step.zero_()
-        self.target_dwell_steps.zero_()
+        self.target_hold_steps.zero_()
+        self.success_count.zero_()
         self.gripper_command.fill_(1.0)
         for x in (
             self.physical_grasp,
@@ -313,10 +315,25 @@ class Lite6LiftEnv(SceneMixin, ObsMixin, RewardMixin):
         obs = self._get_obs()
         reward, info = self._compute_reward()
         in_target = info["in_target"].bool()
-        # Count total target occupancy. Leaving the target pauses the counter;
-        # it intentionally does not reset it.
-        self.target_dwell_steps += in_target.long()
-        success = self.target_dwell_steps >= self.env_config.success_dwell_steps
+
+        # Count consecutive target occupancy. Leaving the target resets the
+        # current streak. Each full hold interval records one success and
+        # starts a fresh interval without interrupting the episode.
+        self.target_hold_steps = torch.where(
+            in_target,
+            self.target_hold_steps + 1,
+            torch.zeros_like(self.target_hold_steps),
+        )
+        success_event = (
+            self.target_hold_steps >= self.env_config.success_hold_steps
+        )
+        self.success_count += success_event.long()
+        self.target_hold_steps = torch.where(
+            success_event,
+            torch.zeros_like(self.target_hold_steps),
+            self.target_hold_steps,
+        )
+        success = self.success_count > 0
 
         # Reaching the success threshold never ends an episode early. Every
         # environment runs to the configured time limit so target reward can
@@ -325,11 +342,9 @@ class Lite6LiftEnv(SceneMixin, ObsMixin, RewardMixin):
         truncated = self.current_step >= self.env_config.max_episode_steps
         info.update(
             is_success=success.detach(),
-            target_dwell_steps=self.target_dwell_steps.detach().clone(),
-            target_dwell_ratio=(
-                self.target_dwell_steps.float()
-                / self.current_step.clamp(min=1).float()
-            ).detach(),
+            success_event=success_event.detach(),
+            success_count=self.success_count.detach().clone(),
+            target_hold_steps=self.target_hold_steps.detach().clone(),
             contact_left=self.contact_left.detach().clone(),
             contact_right=self.contact_right.detach().clone(),
             contact_opposite=self.contact_opposite.detach().clone(),

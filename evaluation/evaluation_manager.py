@@ -18,7 +18,7 @@ class EvaluationManager:
         reward_sum = 0.0
         length_sum = 0.0
         success_sum = 0.0
-        dwell_steps_sum = 0.0
+        success_count_sum = 0.0
 
         episode_rewards = torch.zeros(num_envs, dtype=torch.float32, device=DEVICE)
         episode_lengths = torch.zeros(num_envs, dtype=torch.float32, device=DEVICE)
@@ -38,7 +38,7 @@ class EvaluationManager:
                 reward_sum += episode_rewards[env_id].item()
                 length_sum += episode_lengths[env_id].item()
                 success_sum += info["is_success"][env_id].float().item()
-                dwell_steps_sum += info["target_dwell_steps"][env_id].item()
+                success_count_sum += info["success_count"][env_id].item()
                 episode_count += 1
 
             if done_ids.numel() > 0:
@@ -50,19 +50,17 @@ class EvaluationManager:
         mean_reward = reward_sum / self.num_episodes
         mean_length = length_sum / self.num_episodes
         success_rate = success_sum / self.num_episodes
-        mean_dwell_steps = dwell_steps_sum / self.num_episodes
-        mean_dwell_ratio = mean_dwell_steps / mean_length if mean_length > 0 else 0.0
+        mean_success_count = success_count_sum / self.num_episodes
 
         if writer is not None:
             writer.add_scalar("eval/eval_rews", mean_reward, step)
             writer.add_scalar("eval/eval_lens", mean_length, step)
             writer.add_scalar("eval/success_rate", success_rate, step)
-            writer.add_scalar("eval/target_dwell_steps", mean_dwell_steps, step)
-            writer.add_scalar("eval/target_dwell_ratio", mean_dwell_ratio, step)
+            writer.add_scalar("eval/success_count", mean_success_count, step)
 
         tqdm.write(
             f"[Eval] step={step} | reward={mean_reward:.2f} | "
             f"length={mean_length:.1f} | success_rate={success_rate:.3f} | "
-            f"target_dwell={mean_dwell_steps:.1f}"
+            f"success_count={mean_success_count:.2f}"
         )
         return mean_reward, mean_length, success_rate

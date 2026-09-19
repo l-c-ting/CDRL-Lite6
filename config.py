@@ -63,7 +63,7 @@ class EnvConfig:
     cube_density: float = 500.0
     cube_friction: float = 1.0
     lift_target_height: float = 0.10
-    success_dwell_steps: int = 100
+    success_hold_steps: int = 500
 
     # Side camera used for external viewing.
     side_camera_view: Literal["front", "right", "left"] = "front"
